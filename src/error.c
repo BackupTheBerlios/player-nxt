@@ -20,6 +20,8 @@
  */
 
 #include "error.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 static const char const *err_str[] = {
   "Success",
@@ -34,8 +36,16 @@ static const char const *err_str[] = {
   "Invalid firmware image",
 };
 
-const char const *
+const char *
 nxt_str_error(nxt_error_t err)
 {
   return err_str[err];
+}
+
+void nxt_err_check(nxt_error_t err)
+{
+    if (err != NXT_OK) {
+        printf("NXT error: %s\n", nxt_str_error(err));
+        exit(err);
+    }
 }
