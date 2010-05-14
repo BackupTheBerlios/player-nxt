@@ -1,6 +1,7 @@
-#include <iostream>
+#include <stdio>
 
 int main(int argc, char **argv) {
-    std::cout << "Hello, world!" << std::endl;
+    printf("Looking for brick...\n");
+    
     return 0;
 }
