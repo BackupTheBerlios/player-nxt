@@ -39,7 +39,7 @@ typedef enum
 const char *nxt_str_error(nxt_error_t err);
 
 /* If err != NXT_OK, print error to stdout and exit with err code */
-void nxt_err_check(nxt_error_t err);
+void nxt_err_check(nxt_error_t err, const char *info_if_ok);
 
 #define NXT_ERR(expr)                   \
   do {                                  \

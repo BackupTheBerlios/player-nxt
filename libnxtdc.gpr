@@ -1,0 +1,39 @@
+project Libnxtdc is
+
+   for Languages use ("C", "C++");
+   for Source_Dirs use ("src");
+   for Object_Dir use "build";
+   for Main use ("main.cpp");
+
+   package Naming is
+      for Specification_Suffix ("c") use ".h";
+      for Implementation_Suffix ("c") use ".c";
+      for Specification_Suffix ("c++") use ".hh";
+      for Implementation_Suffix ("c++") use ".cpp";
+   end Naming;
+
+   package Compiler is
+      for Default_Switches ("c") use ("-O2", "-g", "-Wall");
+      for Default_Switches ("c++") use ("-O2", "-g", "-Wall");
+      for Default_Switches ("ada") use ("-gnatVa", "-gnatwa", "-O2", "-gnato", "-fstack-check", "-gnatQ", "-g", "-gnata");
+   end Compiler;
+
+   package Linker is
+      for Default_Switches ("c") use ("-g");
+      for Default_Switches ("c++") use ("-g", "-lusb");
+   end Linker;
+
+   package Ide is
+      for Compiler_Command ("c++") use "g++";
+   end Ide;
+
+   package Builder is
+      for Default_Switches ("ada") use ("-g");
+   end Builder;
+
+   package Binder is
+      for Default_Switches ("ada") use ("-E");
+   end Binder;
+
+end Libnxtdc;
+

@@ -103,14 +103,21 @@ nxt_open(nxt_t *nxt)
       return NXT_CONFIGURATION_ERROR;
     }
 
-  ret = usb_claim_interface(nxt->hdl, 1);
+
+  ret = usb_claim_interface(nxt->hdl, 0);
   if (ret < 0)
     {
       usb_close(nxt->hdl);
       return NXT_IN_USE;
-    }
+	}
 
-  /* NXT handshake */
+    ret = usb_reset(nxt->hdl);
+    if (ret < 0)
+	return NXT_HANDSHAKE_FAILED;
+
+
+    /* NXT handshake */
+    /*
   nxt_send_str(nxt, "N#");
   nxt_recv_buf(nxt, buf, 2);
   if (memcmp(buf, "\n\r", 2) != 0)
@@ -119,6 +126,7 @@ nxt_open(nxt_t *nxt)
       usb_close(nxt->hdl);
       return NXT_HANDSHAKE_FAILED;
     }
+    */
 
   return NXT_OK;
 }
