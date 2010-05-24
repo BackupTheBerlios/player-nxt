@@ -45,9 +45,9 @@ nxt_str_error(nxt_error_t err)
 void nxt_err_check(nxt_error_t err, const char *info_if_ok)
 {
     if (err != NXT_OK) {
-        printf("NXT error: %s\n", nxt_str_error(err));
+        printf("NXT ERR: %s\n", nxt_str_error(err));
         exit(err);
     }
     else
-	printf("NXT OK: %s\n", info_if_ok);
+	printf("NXT ok : %s\n", info_if_ok);
 }

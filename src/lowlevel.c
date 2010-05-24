@@ -91,7 +91,7 @@ nxt_error_t nxt_find(nxt_t *nxt)
 nxt_error_t
 nxt_open(nxt_t *nxt)
 {
-  char buf[2];
+//  char buf[2];
   int ret;
 
   nxt->hdl = usb_open(nxt->dev);
