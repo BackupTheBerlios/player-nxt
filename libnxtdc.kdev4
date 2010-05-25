@@ -1,4 +1,3 @@
 [Project]
+Manager=KDevCustomMakeManager
 Name=libnxtdc
-Manager=KDevCMakeManager
-VersionControl=

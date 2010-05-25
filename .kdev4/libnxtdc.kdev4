@@ -9,3 +9,25 @@ CurrentBuildDir=file:///home/jano/prog/libnxtdc/libnxtdc/build
 CurrentBuildType=Debug
 CurrentInstallDir=
 ProjectRootRelative=./
+
+[Launch]
+Launch Configurations=Launch Configuration 0
+
+[Launch][Launch Configuration 0]
+Configured Launch Modes=execute
+Configured Launchers=nativeAppLauncher
+Name=GprBuild
+Type=Native Application
+
+[Launch][Launch Configuration 0][Data]
+Arguments=
+Dependencies=@Variant(\x00\x00\x00\t\x00\x00\x00\x00\x00)
+Dependency Action=Nothing
+EnvironmentGroup=default
+Executable=gprbuild
+Working Directory=file:///home/jano/prog/libnxtdc/
+isExecutable=true
+
+[MakeBuilder]
+Additional Options=-f Makefile.gnat
+Number Of Jobs=1
