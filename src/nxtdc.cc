@@ -1,6 +1,9 @@
 #include <cassert>
 #include <cstdio>
+#include <cstring>
+#include <endian.h>
 #include "nxtdc.hh"
+#include <sstream>
 #include <sys/time.h>
 
 using namespace NXT;
@@ -19,7 +22,19 @@ const unsigned char kInEndpoint  = 0x82;
 
 enum direct_commands
 {
-  command_play_tone = 0x03
+  command_play_tone            = 0x03,
+  command_set_output_state     = 0x04,
+  command_get_output_state     = 0x06,
+  command_reset_motor_position = 0x0A,
+  command_get_battery_level    = 0x0B,
+  command_stop_sound_playback  = 0x0C,
+  command_keep_alive           = 0x0D
+};
+
+enum system_commands
+{
+  system_get_firmware_version  = 0x88,
+  system_get_device_info       = 0x9B
 };
 
 const char *usberr_to_str ( int err )
@@ -59,6 +74,51 @@ const char *usberr_to_str ( int err )
     }
 }
 
+string nxterr_to_str ( int err )
+{
+  switch ( err )
+    {
+    case 0x20:
+      return "Pending communication transaction in progress";
+    case 0x40:
+      return "Specified mailbox queue is empty";
+    case 0xBD:
+      return "Request failed (e.g. specified file not found)";
+    case 0xBE:
+      return "Unknown command opcode";
+    case 0xBF:
+      return "Insane packet";
+    case 0xC0:
+      return "Data contains out-of-range values";
+    case 0xDD:
+      return "Communication bus error";
+    case 0xDE:
+      return "No free memory in communication buffer";
+    case 0xDF:
+      return "Specified channel/connection is not valid";
+    case 0xE0:
+      return "Specified channel/connection not configured or busy";
+    case 0xEC:
+      return "No active program";
+    case 0xED:
+      return "Illegal size specified";
+    case 0xEE:
+      return "Illegal mailbox queue ID specified";
+    case 0xEF:
+      return "Attempted to access invalid field or structure";
+    case 0xF0:
+      return "Bad input or output specified";
+    case 0xFB:
+      return "Insufficient memory available";
+    case 0xFF:
+      return "Bad arguments";
+    default:
+      char s[100];
+      snprintf ( s, 100, "NXT_UNCATEGORIZED_ERROR: 0x%02x", err );
+      return string ( s );
+    }
+}
+
 buffer & buffer::append_byte ( uint8_t byte )
 {
   push_back ( static_cast<unsigned char> ( byte ) );
@@ -88,6 +148,14 @@ buffer & buffer::append ( const buffer & buf )
 
   return *this;
 }
+
+void buffer::dump ( const string & header ) const
+  {
+    printf ( "%s\n", header.c_str() );
+
+    for ( size_type i = 0; i < this->size(); i++ )
+      printf ( "%2d = 0x%02x\n", i, this->at ( i ) );
+  }
 
 void USB_transport::usb_check ( int usb_error )
 {
@@ -121,6 +189,8 @@ USB_transport::~USB_transport ( void )
 void USB_transport::write ( const buffer &buf )
 {
   int transferred;
+
+  // buf.dump ( "write" );
 
   usb_check ( libusb_bulk_transfer
               ( handle_, kOutEndpoint,
@@ -159,48 +229,216 @@ brick::~brick ( void )
   ;
 }
 
-void brick::execute ( const buffer &command, bool with_feedback = false )
+buffer brick::execute ( const buffer &command, bool with_feedback )
 {
-  assert (command.size() > 2);
-  
-  if (with_feedback && (
-  
-  // Set or reset 0x80 bit (confirmation request)
-  command[0] = ( with_feedback ? command[0] & 0x7F : command[0] | 0x80 );
-  
-  link_.write ( 
+  assert ( command.size() >= 2 );
+
+  if ( with_feedback && ( ! ( command[0] & 0x80 ) ) )
+    link_.write ( command );
+  else if ( ( !with_feedback ) && ( command[0] & 0x80 ) )
+    link_.write ( command );
+  else
+    {
+      buffer newcomm ( command );
+
+      // Set or reset 0x80 bit (confirmation request)
+      newcomm[0] = ( with_feedback ? command[0] & 0x7F : command[0] | 0x80 );
+
+      link_.write ( newcomm );
+    }
+
+  if ( with_feedback )
+    {
+      const buffer reply = link_.read ();
+      if ( reply.size() < 3 )
+        {
+          stringstream s;
+          s << "Reply too short: " << reply.size() << " bytes";
+          throw nxt_error ( s.str () );
+        }
+      else if ( reply[0] != brick::reply )
+        {
+          char s[100];
+          snprintf ( s, 100, "Unexpected telegram: 0x%02x != 0x%02x", reply[0], brick::reply );
+          throw nxt_error ( s );
+        }
+      else if ( reply[1] != command[1] )
+        {
+          char s[100];
+          snprintf ( s, 100, "Unexpected reply type: 0x%02x != 0x%02x", reply[1], command[1] );
+          throw nxt_error ( s );
+        }
+      else if ( reply[2] != 0 )
+        throw nxt_error ( nxterr_to_str ( reply[2] ) );
+      else
+        return reply;
+    }
+  else
+    return buffer();
 }
 
 buffer brick::prepare_play_tone ( uint16_t tone_Hz, uint16_t duration_ms )
 {
-  return assemble ( direct_command_without_response, command_play_tone,
+  return assemble ( direct_command_without_response,
+                    command_play_tone,
                     buffer().
                     append_word ( tone_Hz ).
                     append_word ( duration_ms ) ) ;
 }
 
-void brick::play_tone ( uint16_t tone_Hz, uint16_t duration_ms )
+buffer brick::prepare_output_state (
+  motors           motor       ,
+  int8_t           power_pct   ,
+  motor_modes      mode        ,
+  regulation_modes regulation  ,
+  int8_t           turn_ratio  ,
+  motor_run_states state       ,
+  uint32_t         tacho_count )
 {
-  execute ( prepare_play_tone ( tone_Hz, duration_ms ), true );
+  union
+    {
+      uint8_t  bytes[4];
+      uint32_t tacho;
+    } aux;
+
+  aux.tacho = htole32 ( tacho_count );
+
+  return
+    assemble
+    ( direct_command_without_response,
+      command_set_output_state,
+      buffer().
+      append_byte ( motor ).
+      append_byte ( power_pct ).
+      append_byte ( mode ).
+      append_byte ( regulation ).
+      append_byte ( turn_ratio ).
+      append_byte ( state ).
+      append_byte ( aux.bytes[0] ).append_byte ( aux.bytes[1] ).
+      append_byte ( aux.bytes[2] ).append_byte ( aux.bytes[3] ) );
 }
 
-// void brick::fiemo ( void )
-// {
-//   link_.write
-//   (
-//     buffer().
-//     append_byte ( 0x00 ). // direct with resp
-//     append_byte ( 0x04 ). //command
-//     append_byte ( 0x01 ). //all motors
-//     append_byte ( 50 ).   // 50% power
-//     append_byte ( 1 ). // MODE_MOTOR_ON
-//     append_byte ( 1 ). // REGULATION_MOTOR_SPEED
-//     append_byte ( 0 ). // TURN_RATIO
-//     append_byte ( 0x20 ). // RUN_STATE_RUNNING
-//     append_word ( 0 ).append_word ( 0 ) );// forever
-//
-//   link_.read();
-// }
+buffer brick::prepare_reset_motor_position ( motors motor, bool relative_to_last_position )
+{
+  return
+    assemble ( direct_command_without_response,
+               command_reset_motor_position,
+               buffer().
+               append_byte ( motor ).
+               append_byte ( relative_to_last_position ) );
+}
+
+buffer brick::prepare_stop_sound_playback ( void )
+{
+  return
+    assemble ( direct_command_without_response,
+               command_stop_sound_playback,
+               buffer() );
+}
+
+buffer brick::prepare_keep_alive ( void )
+{
+  return
+    assemble ( direct_command_without_response,
+               command_keep_alive,
+               buffer() );
+}
+
+void brick::play_tone ( uint16_t tone_Hz, uint16_t duration_ms )
+{
+  execute ( prepare_play_tone ( tone_Hz, duration_ms ), false );
+}
+
+void brick::set_motor ( motors motor, int8_t power_pct )
+{
+  execute
+  ( assemble
+    ( direct_command_without_response,
+      command_set_output_state,
+      buffer().
+      append_byte ( motor ).
+      append_byte ( power_pct ).
+      append_byte ( motor_brake ).		// Brake uses a bit more power but gives finer control at low speeds
+      append_byte ( regulation_motor_speed ). 	// Does something in presence of load, but what?
+      append_byte ( 0 ). 			// TURN_RATIO
+      append_byte ( power_pct == 0 ? motor_run_state_idle : motor_run_state_running ).
+      append_word ( 0 ).append_word ( 0 ) ),	// Tacho count (unlimited)
+    false );
+}
+
+output_state brick::get_motor_state ( motors motor )
+{
+  const buffer reply =
+    execute
+    ( assemble
+      ( direct_command_with_response,
+        command_get_output_state,
+        buffer().append_byte ( motor ) ) , true );
+
+  const output_state state =
+  {
+    reply[3],                                   // motor
+    reply[4],                                   // power_pct
+    static_cast<motor_modes> ( reply[5] ),      // motor_modes
+    static_cast<regulation_modes> ( reply[6] ), // regulation_modes
+    reply[7],                                   // turn_ratio
+    static_cast<motor_run_states> ( reply[8] ), // motor_run_states
+    le32toh ( *reinterpret_cast<const int32_t*> ( &reply[9] ) ),
+    le32toh ( *reinterpret_cast<const int32_t*> ( &reply[13] ) ),
+    le32toh ( *reinterpret_cast<const int32_t*> ( &reply[17] ) ),
+    le32toh ( *reinterpret_cast<const int32_t*> ( &reply[21] ) ),
+  };
+  return state;
+
+}
+
+versions brick::get_version ( void )
+{
+  const buffer reply =
+    execute
+    ( assemble
+      ( system_command_with_response,
+        system_get_firmware_version,
+        buffer() ) , true );
+
+  const versions v = { reply.at ( 3 ), reply.at ( 4 ), reply.at ( 5 ), reply.at ( 6 ) };
+  return v;
+}
+
+device_info brick::get_device_info ( void )
+{
+  const buffer reply =
+    execute
+    ( assemble
+      ( system_command_with_response,
+        system_get_device_info,
+        buffer() ) , true );
+
+  device_info info;
+  strncpy ( info.brick_name, reinterpret_cast<const char*> ( &reply[3] ), 14 );
+  info.brick_name[14] = '\0';
+  strncpy ( info.bluetooth_address, reinterpret_cast<const char*> ( &reply[18] ), 6 );
+  info.bluetooth_address[6] = '\0';
+
+  return info;
+}
+
+uint16_t brick::get_battery_level ( void )
+{
+  const buffer reply =
+    execute ( assemble ( direct_command_with_response,
+                         command_get_battery_level,
+                         buffer() ),
+              true );
+
+  union
+    { const unsigned char * bytes;
+      const uint16_t      * level;
+    } aux;
+
+  aux.bytes = &reply[3];
+  return le16toh ( *aux.level );
+}
 
 void brick::msg_rate_check ( void )
 {
@@ -211,7 +449,7 @@ void brick::msg_rate_check ( void )
 
   do
     {
-      play_tone ( 440, 1 );
+      execute ( prepare_play_tone ( 440, 0 ), true );
       calls++;
 
       assert ( gettimeofday ( &now, NULL ) == 0 );
@@ -222,9 +460,9 @@ void brick::msg_rate_check ( void )
   printf ( "%d calls in 10s (%dms per call)\n", calls, 10000 / calls );
 }
 
-const buffer & brick::assemble ( telegram_types teltype,
-                                 uint8_t        command,
-                                 const buffer & payload )
+buffer brick::assemble ( telegram_types teltype,
+                         uint8_t        command,
+                         const buffer & payload )
 {
   return
     buffer ().
