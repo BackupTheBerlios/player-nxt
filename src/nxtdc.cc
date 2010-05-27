@@ -133,7 +133,7 @@ buffer & buffer::append_word ( uint16_t word )
       uint16_t      le_word;
     } tmp;
 
-  tmp.le_word = libusb_cpu_to_le16 ( word );
+  tmp.le_word = htole16 ( word );
 
   push_back ( tmp.bytes[0] );
   push_back ( tmp.bytes[1] );
