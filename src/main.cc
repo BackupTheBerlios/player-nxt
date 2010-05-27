@@ -7,9 +7,9 @@ using namespace std;
 
 void set_power ( brick &b, int power )
 {
-  const int i = power / 10;
+  const int i = power;
 
-  b.set_motor ( B, i );
+  b.set_motor ( B,  i );
   b.set_motor ( C, -i );
  
   usleep ( 100000 );

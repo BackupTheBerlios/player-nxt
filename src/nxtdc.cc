@@ -359,7 +359,7 @@ void brick::set_motor ( motors motor, int8_t power_pct )
       append_byte ( motor ).
       append_byte ( power_pct ).
       append_byte ( motor_brake ).		// Brake uses a bit more power but gives finer control at low speeds
-      append_byte ( regulation_motor_speed ). 	// Does something in presence of load, but what?
+      append_byte ( regulation_motor_idle ). // Better Idle than Running, which tries to compensate loads?
       append_byte ( 0 ). 			// TURN_RATIO
       append_byte ( power_pct == 0 ? motor_run_state_idle : motor_run_state_running ).
       append_word ( 0 ).append_word ( 0 ) ),	// Tacho count (unlimited)
