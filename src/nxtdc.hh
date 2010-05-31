@@ -1,4 +1,4 @@
-#include <libusb-1.0/libusb.h>
+#include <libusb.h>
 #include <stdexcept>
 #include <vector>
 
@@ -112,18 +112,18 @@ namespace NXT
 
     public:
 
-      brick ( void );
       // Connect to the first brick found
       // TODO: give some means of connecting to a particular brick.
       // As is, this library serves only for using with a single brick.
+      brick ( void );
 
       ~brick ( void );
 
-      buffer execute ( const buffer &command, bool with_feedback = false );
       // Execute a prepared command
       // When with_feedback, the brick is asked to confirm proper execution
       // Returns the reply buffer, with the reply flag byte, status, and etc.
       //   or an empty buffer if !with_feedback
+      buffer execute ( const buffer &command, bool with_feedback = false );
 
       // PREPARED COMMANDS
       // That you an store and execute with or without feedback
@@ -150,21 +150,21 @@ namespace NXT
 
       void play_tone ( uint16_t tone_Hz, uint16_t duration_ms );
 
-      void set_motor ( motors motor, int8_t power_pct );
       // Simple motor control
+      void set_motor ( motors motor, int8_t power_pct );
 
       output_state get_motor_state ( motors motor );
 
-      uint16_t get_battery_level ( void );
       // In millivolts
+      uint16_t get_battery_level ( void );
 
       versions get_version ( void );
 
       device_info get_device_info ( void );
 
-      void msg_rate_check ( void );
       // Run a 10-second loop of play_tone, to get the average time per commands
       // For testing purposes, yes.
+      void msg_rate_check ( void );
 
     private:
 
