@@ -131,7 +131,9 @@ class Nxt : public ThreadedDriver
     player_devaddr_t motor_addr_[kNumMotors];
     player_devaddr_t power_addr_;
 
-    player_position1d_data_t data_state_[kNumMotors];
+    player_position1d_data_t data_state_     [kNumMotors]; // Just read status.
+    player_position1d_data_t data_state_prev_[kNumMotors]; // Previous status to integrate speed.
+
     double           max_power_[kNumMotors];
     double           max_speed_[kNumMotors];
     double           odom_rate_[kNumMotors];
@@ -287,12 +289,17 @@ void Nxt::CheckMotors ( void )
       const NXT::output_state state = brick_->get_motor_state ( static_cast<NXT::motors> ( i ) );
 
       data_state_[i].pos = state.tacho_count * odom_rate_[i];
-      PLAYER_MSG2 ( 5, "nxt: odom read is [raw/adjusted] = [ %d / %8.2f ]", state.tacho_count, data_state_[i].pos );
+      data_state_[i].vel = ( data_state_[i].pos - data_state_prev_[i].pos ) / period_;
+
+      PLAYER_MSG3 ( 5, "nxt: odom read is [raw/adjusted/vel] = [ %8d / %8.2f / %8.2f ]",
+                    state.tacho_count, data_state_[i].pos, data_state_[i].vel );
 
       Publish ( motor_addr_[i],
                 PLAYER_MSGTYPE_DATA,
                 PLAYER_POSITION1D_DATA_STATE,
                 static_cast<void*> ( &data_state_[i] ) );
+
+      data_state_prev_[i] = data_state_[i];
     }
 }
 
@@ -319,6 +326,7 @@ int Nxt::ProcessMessage ( QueuePointer  & resp_queue,
 
       const NXT::motors motor = GetMotor ( hdr->addr );
       brick_->set_motor ( motor, GetPower ( vel.vel, motor ) );
+
       return 0;
     }
 
@@ -362,7 +370,7 @@ int Nxt::ProcessMessage ( QueuePointer  & resp_queue,
     {
       PLAYER_WARN ( "nxt: acceleration ignored, adjusting max speed only" );
       const NXT::motors motor = GetMotor ( hdr->addr );
-      const player_position1d_speed_prof_req_t &prof = *static_cast<player_position1d_speed_prof_req_t*>( data );
+      const player_position1d_speed_prof_req_t &prof = *static_cast<player_position1d_speed_prof_req_t*> ( data );
 
       max_power_[motor] *= ( prof.speed / max_speed_[motor] ); // Adjust power proportionally
       max_speed_[motor]  = prof.speed;
