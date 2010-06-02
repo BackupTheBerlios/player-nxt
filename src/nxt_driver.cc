@@ -306,7 +306,8 @@ int Nxt::ProcessMessage ( QueuePointer  & resp_queue,
       return 0;
     }
 
-  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_CMD, PLAYER_POSITION1D_CMD_POS ) )
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_CMD, PLAYER_POSITION1D_CMD_POS ) ||
+       Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POSITION1D_REQ_POSITION_PID ) )
     {
       PLAYER_WARN ( "nxt: position commands not supported" );
       return 0;
@@ -321,7 +322,58 @@ int Nxt::ProcessMessage ( QueuePointer  & resp_queue,
       return 0;
     }
 
-  printf ( "nxt: Message not processed idx:%d type:%d sub:%d seq:%d\n", hdr->addr.index, hdr->type, hdr->subtype, hdr->seq );
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POSITION1D_REQ_GET_GEOM ) )
+    {
+      PLAYER_WARN ( "nxt: geometry not supported" );
+      return 0;
+    }
+
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POSITION1D_REQ_POSITION_MODE ) )
+    {
+      PLAYER_WARN ( "nxt: mode is always speed" );
+      return 0;
+    }
+
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POSITION1D_REQ_MOTOR_POWER ) )
+    {
+      PLAYER_WARN ( "nxt: motors are always on" );
+      return 0;
+    }
+
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POSITION1D_REQ_RESET_ODOM ) )
+    {
+      brick_->execute ( brick_->prepare_reset_motor_position ( GetMotor ( hdr->addr ) ) );
+      return 0;
+    }
+
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POSITION1D_REQ_SET_ODOM ) )
+    {
+      PLAYER_WARN ( "nxt: odometry setting to arbitrary values not supported" );
+      return 0;
+    }
+
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POSITION1D_REQ_SPEED_PID ) )
+    {
+      PLAYER_WARN ( "nxt: speed profiles not supported" );
+      return 0;
+    }
+
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POSITION1D_REQ_SPEED_PROF ) )
+    {
+      PLAYER_WARN ( "nxt: acceleration ignored, adjusting max speed only" );
+      const NXT::motors motor = GetMotor ( hdr->addr );
+      const player_position1d_speed_prof_req_t &prof = *static_cast<player_position1d_speed_prof_req_t*>( data );
+
+      max_power_[motor] *= ( prof.speed / max_speed_[motor] ); // Adjust power proportionally
+      max_speed_[motor]  = prof.speed;
+
+      if ( abs ( max_power_[motor] ) > 100 )
+        PLAYER_WARN2 ( "nxt: requested speed would require excess power: [speed/power] = [ %8.2f / %8.2f ]",
+                       max_speed_[motor], max_power_[motor] );
+      return 0;
+    }
+
+  PLAYER_WARN4 ( "nxt: Message not processed idx:%d type:%d sub:%d seq:%d\n", hdr->addr.index, hdr->type, hdr->subtype, hdr->seq );
   return -1;
 }
 

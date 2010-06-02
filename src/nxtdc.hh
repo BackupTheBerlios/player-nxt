@@ -140,7 +140,7 @@ namespace NXT
         uint32_t         tacho_count = 0 );
       // Full motor control; refer to NXT docs for precise meanings...
 
-      buffer prepare_reset_motor_position ( motors motor, bool relative_to_last_position );
+      buffer prepare_reset_motor_position ( motors motor, bool relative_to_last_position = false );
       buffer prepare_stop_sound_playback ( void );
       buffer prepare_keep_alive ( void );
 
