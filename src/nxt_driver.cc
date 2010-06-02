@@ -43,11 +43,15 @@ Sensors are unimplemented.
 
 @par Configuration file options
 
-- max_power (float [%] default: 100)
-  - Power applied when maximum vel is requested.
+- max_power (tuple of float [%] default: [100 100 100])
+  - Power applied when maximum vel is requested for each motor.
 
-- max_speed (float [length/s] default: 0.5)
-  - Speed that the motor provides (must be calibrated/measured somehow depending on the LEGO model built).
+- max_speed (tuple of float [length/s] default: [0.5 0.5 0.5])
+  - Speed that each motor provides at max_power (must be calibrated/measured somehow depending on the LEGO model built).
+
+- odom_rate (tuple of float default [0.0005 0.0005 0.0005])
+  - Multiplier for the tachometer in the lego motor. tacho_count x odom_rate = real_distance (must be calibrated also).
+  - Default is somewhat close to the standard small wheels with direct motor drive.
 
 - period (float [s] default 0.05)
   - Seconds between reads of motor encoders. Since this requires polling and affects CPU use, each app can set an adequate timing.
@@ -68,8 +72,9 @@ driver
   name "nxt"
   provides [ "B:::position1d:0" "C:::position1d:0" "power:0" ]
 
-  max_power 100 # 100% power is to be used
-  max_speed 0.5 # in order to achieve 0.5 m/s linearly
+  max_power [100 100 100] # 100% power is to be used
+  max_speed [0.5 0.5 0.5] # in order to achieve 0.5 m/s linearly
+  odom_rate [0.1 0.1 0.1] # multiplier for odometry
 )
 
 # The differential driver that provides simplified position2d management
@@ -109,6 +114,8 @@ driver
 #include "libplayercore/playercore.h"
 #include "nxtdc.hh"
 
+const int kNumMotors = 3;
+
 class Nxt : public ThreadedDriver
   {
   public:
@@ -121,11 +128,18 @@ class Nxt : public ThreadedDriver
     virtual int ProcessMessage ( QueuePointer &resp_queue, player_msghdr * hdr, void * data );
 
   private:
-    player_devaddr_t motor_addr_[3];
+    player_devaddr_t motor_addr_[kNumMotors];
     player_devaddr_t power_addr_;
 
-    bool             publish_motor_[3];
+    player_position1d_data_t data_state_[kNumMotors];
+    double           max_power_[kNumMotors];
+    double           max_speed_[kNumMotors];
+    double           odom_rate_[kNumMotors];
+
+    bool             publish_motor_[kNumMotors];
     bool             publish_power_;
+
+    player_power_data_t juice_;
 
     double           period_;
     Chronos          timer_battery_;
@@ -134,6 +148,9 @@ class Nxt : public ThreadedDriver
     NXT::brick       *brick_;
 
     void             CheckBattery ( void );
+    void             CheckMotors ( void );
+    NXT::motors      GetMotor ( const player_devaddr_t &addr ) const;
+    int8_t           GetPower ( float vel, NXT::motors motor ) const;
   };
 
 Driver* nxt_Init ( ConfigFile* cf, int section )
@@ -146,12 +163,37 @@ void nxt_Register ( DriverTable* table )
   table->AddDriver ( "nxt", nxt_Init );
 }
 
+const char *motor_names[kNumMotors] = { "A", "B", "C" };
+
 Nxt::Nxt ( ConfigFile *cf, int section )
     : ThreadedDriver ( cf, section ),
     period_ ( cf->ReadFloat ( section, "period", 0.05 ) ),
     timer_battery_ ( -666.0 )   // Ensure first update to be sent immediately
 {
-  const char *motor_names[] = { "A", "B", "C" };
+  for ( int i = 0; i < kNumMotors; i++ )
+    {
+      // Read them regardless of motor usage to placate player unused warnings
+      max_power_[i] = cf->ReadTupleFloat ( section, "max_power", i, 100.0 );
+      max_speed_[i] = cf->ReadTupleFloat ( section, "max_speed", i, 0.5 );
+      odom_rate_[i] = cf->ReadTupleFloat ( section, "odom_rate", i, 0.0005 );
+
+      if ( cf->ReadDeviceAddr ( &motor_addr_[i], section, "provides", PLAYER_POSITION1D_CODE, -1, motor_names[i] ) == 0 )
+        {
+          PLAYER_MSG1 ( 3, "nxt: Providing motor %s", motor_names[i] );
+
+          if ( AddInterface ( motor_addr_[i] ) != 0 )
+            throw std::runtime_error ( "Cannot add position1d interface" );
+          else
+            {
+              publish_motor_[i] = true;
+
+              data_state_[i].pos    = 0.0f;
+              data_state_[i].vel    = 0.0f;
+              data_state_[i].stall  = 0;
+              data_state_[i].status = ( 1 << PLAYER_POSITION1D_STATUS_ENABLED );
+            }
+        }
+    }
 
   if ( cf->ReadDeviceAddr ( &power_addr_, section, "provides", PLAYER_POWER_CODE, -1, NULL ) == 0 )
     {
@@ -170,11 +212,23 @@ Nxt::Nxt ( ConfigFile *cf, int section )
 int Nxt::MainSetup ( void )
 {
   brick_ = new NXT::brick();
+
+  // Reset odometries to origin
+  for ( int i = 0; i < kNumMotors; i++ )
+    if ( publish_motor_[i] )
+      brick_->execute ( brick_->prepare_reset_motor_position ( static_cast<NXT::motors> ( i ), false ) );
+
   return 0;
 }
 
 void Nxt::MainQuit ( void )
 {
+  // Stop motors just in case they're running.
+  // The brick has no watchdog, so they will keep its last commanded speed forever
+  for ( int i = 0; i < kNumMotors; i++ )
+    if ( publish_motor_[i] )
+      brick_->set_motor ( static_cast<NXT::motors> ( i ), 0 );
+
   delete brick_;
 }
 
@@ -190,46 +244,116 @@ void Nxt::Main ( void )
       ProcessMessages ( 0 );
 
       CheckBattery();
+      CheckMotors();
     }
 }
 
 void Nxt::CheckBattery ( void )
 {
-  printf ( "1\n" );
   if ( ! publish_power_ )
     return;
-  printf ( "2\n" );
 
-  // We don't want to poll battery level innecesarily often
-  if ( timer_battery_.elapsed() < 60.0 )
-    return;
-  printf ( "3\n" );
+  // We don't want to poll battery level innecesarily often (how much is this, really?)
+  if ( timer_battery_.elapsed() > 10.0 )
+    {
+      timer_battery_.reset();
 
-  timer_battery_.reset();
-  printf ( "4\n" );
-
-  player_power_data_t juice =
-  {
-    PLAYER_POWER_MASK_VOLTS,
-    static_cast<float> ( brick_->get_battery_level() ) / 1000.0f
-    // Omitted 4 unknown values here
-  };
-  printf ( "5\n" );
-
+      juice_.valid = PLAYER_POWER_MASK_VOLTS;
+      juice_.volts = static_cast<float> ( brick_->get_battery_level() ) / 1000.0f;
+      // Omitted 4 unknown values here
+    };
 
   // Publish value
   Publish ( power_addr_,
             PLAYER_MSGTYPE_DATA,
             PLAYER_POWER_DATA_STATE,
-            static_cast<void*> ( &juice ) );
+            static_cast<void*> ( &juice_ ) );
 
-  printf ( "Publishing power: %8.2f\n", juice.volts );
+  PLAYER_MSG1 ( 3, "Publishing power: %8.2f\n", juice_.volts );
+}
+
+void Nxt::CheckMotors ( void )
+{
+  if ( timer_period_.elapsed() < period_ )
+    return;
+
+  timer_period_.reset();
+
+  for ( int i = 0; i < kNumMotors; i++ )
+    {
+      if ( ! publish_motor_[i] )
+        continue;
+
+      const NXT::output_state state = brick_->get_motor_state ( static_cast<NXT::motors> ( i ) );
+
+      data_state_[i].pos = state.tacho_count * odom_rate_[i];
+      PLAYER_MSG2 ( 5, "nxt: odom read is [raw/adjusted] = [ %d / %8.2f ]", state.tacho_count, data_state_[i].pos );
+
+      Publish ( motor_addr_[i],
+                PLAYER_MSGTYPE_DATA,
+                PLAYER_POSITION1D_DATA_STATE,
+                static_cast<void*> ( &data_state_[i] ) );
+    }
 }
 
 int Nxt::ProcessMessage ( QueuePointer  & resp_queue,
                           player_msghdr * hdr,
                           void          * data )
 {
-  printf ( "nxt: Message not processed!\n" );
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POWER_REQ_SET_CHARGING_POLICY_REQ, power_addr_ ) )
+    {
+      PLAYER_WARN ( "nxt: there are no charging policies." );
+      return 0;
+    }
+
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_CMD, PLAYER_POSITION1D_CMD_POS ) )
+    {
+      PLAYER_WARN ( "nxt: position commands not supported" );
+      return 0;
+    }
+
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_CMD, PLAYER_POSITION1D_CMD_VEL ) )
+    {
+      player_position1d_cmd_vel_t &vel = *static_cast<player_position1d_cmd_vel_t*> ( data );
+
+      const NXT::motors motor = GetMotor ( hdr->addr );
+      brick_->set_motor ( motor, GetPower ( vel.vel, motor ) );
+      return 0;
+    }
+
+  printf ( "nxt: Message not processed idx:%d type:%d sub:%d seq:%d\n", hdr->addr.index, hdr->type, hdr->subtype, hdr->seq );
   return -1;
 }
+
+
+NXT::motors Nxt::GetMotor ( const player_devaddr_t &addr ) const
+  {
+    for ( int i = 0; i < kNumMotors; i++ )
+      if ( ( addr.host   == motor_addr_[i].host ) &&
+           ( addr.robot  == motor_addr_[i].robot ) &&
+           ( addr.index  == motor_addr_[i].index ) &&
+           ( addr.interf == motor_addr_[i].interf ) )
+        return static_cast<NXT::motors> ( i );
+
+    throw std::runtime_error ( "nxt: received request for unknown motor" );
+  }
+
+template<class T>
+T sign ( T x )
+{
+  return x >= 0 ? 1 : -1;
+}
+
+int8_t Nxt::GetPower ( float vel, NXT::motors motor ) const
+  {
+    const int8_t power = vel / max_speed_[motor] * max_power_[motor];
+
+    if ( abs ( power ) > abs ( max_power_[motor] ) )
+      {
+        PLAYER_WARN3 ( "nxt: exceeded max power [motor/reqvel/reqpwr] = [ %s / %8.2f / %d ]",
+                       motor_names[motor], vel, power );
+        return max_power_[motor] * sign<float> ( power );
+      }
+    else
+      return power;
+  }
