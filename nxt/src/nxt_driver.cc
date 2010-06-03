@@ -70,36 +70,23 @@ unit_angle  "radians"
 driver
 (
   name "nxt"
-  provides [ "B:::position1d:0" "C:::position1d:0" "power:0" ]
+  provides [ "B:::position1d:0" "C:::position1d:1" "power:0" ]
 
   max_power [100 100 100] # 100% power is to be used
   max_speed [0.5 0.5 0.5] # in order to achieve 0.5 m/s linearly
   odom_rate [0.1 0.1 0.1] # multiplier for odometry
+
+  period 0.05
 )
 
 # The differential driver that provides simplified position2d management
 driver
 (
   name "differential"
-  requires [ "left:::position1d:0" "right:::position1d:0" ]
+  requires [ "left:::position1d:0" "right:::position1d:1" ]
   provides [ "position2d:0" ]
 
-  axis_length 0.5
-)
-
-# Needed renaming of interfaces to properly match them:
-driver
-(
-  name "passthrough"
-  requires [ "B:::position1d:0" ]
-  provides [ "left:::position1d:0" ]
-)
-
-driver
-(
-  name "passthrough"
-  requires [ "C:::position1d:0" ]
-  provides [ "right:::position1d:0" ]
+  axis_length 0.25
 )
 
 @endverbatim
@@ -113,6 +100,8 @@ driver
 #include "libplayercore/driver.h"
 #include "libplayercore/playercore.h"
 #include "nxtdc.hh"
+
+using namespace nxt_driver;
 
 const int kNumMotors = 3;
 
@@ -266,10 +255,11 @@ void Nxt::CheckBattery ( void )
     };
 
   // Publish value
-  Publish ( power_addr_,
-            PLAYER_MSGTYPE_DATA,
-            PLAYER_POWER_DATA_STATE,
-            static_cast<void*> ( &juice_ ) );
+  if ( HasSubscriptions() )
+    Publish ( power_addr_,
+              PLAYER_MSGTYPE_DATA,
+              PLAYER_POWER_DATA_STATE,
+              static_cast<void*> ( &juice_ ) );
 
   PLAYER_MSG1 ( 3, "Publishing power: %8.2f\n", juice_.volts );
 }
@@ -281,6 +271,7 @@ void Nxt::CheckMotors ( void )
 
   timer_period_.reset();
 
+  // First we get odometry updates from brick
   for ( int i = 0; i < kNumMotors; i++ )
     {
       if ( ! publish_motor_[i] )
@@ -294,13 +285,17 @@ void Nxt::CheckMotors ( void )
       PLAYER_MSG3 ( 5, "nxt: odom read is [raw/adjusted/vel] = [ %8d / %8.2f / %8.2f ]",
                     state.tacho_count, data_state_[i].pos, data_state_[i].vel );
 
+      data_state_prev_[i] = data_state_[i];
+    }
+
+  // Then we publish them together, to minimize unsyncing in a consuming driver (e.g. differential driver)
+  for ( int i = 0; i < kNumMotors; i++ )
+    if ( publish_motor_[i] && HasSubscriptions() )
       Publish ( motor_addr_[i],
                 PLAYER_MSGTYPE_DATA,
                 PLAYER_POSITION1D_DATA_STATE,
                 static_cast<void*> ( &data_state_[i] ) );
 
-      data_state_prev_[i] = data_state_[i];
-    }
 }
 
 int Nxt::ProcessMessage ( QueuePointer  & resp_queue,

@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <sys/time.h>
 
-using namespace nxt_driver;
+using namespace driver_differential;
 
 Chronos::Chronos ( double seconds_since_epoch )
 {
