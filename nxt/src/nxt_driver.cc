@@ -302,7 +302,7 @@ int Nxt::ProcessMessage ( QueuePointer  & resp_queue,
                           player_msghdr * hdr,
                           void          * data )
 {
-  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POWER_REQ_SET_CHARGING_POLICY_REQ, power_addr_ ) )
+  if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POWER_REQ_SET_CHARGING_POLICY, power_addr_ ) )
     {
       PLAYER_WARN ( "nxt: there are no charging policies." );
       return 0;

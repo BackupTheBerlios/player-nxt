@@ -92,6 +92,9 @@ driver
 #include "libplayercore/playercore.h"
 #include <cmath>
 #include <stdexcept>
+#include </home/jano/local/include/player-3.0/libplayerinterface/player.h>
+#include </home/jano/prog/player.svn.trunk/libplayerinterface/player.h>
+#include </home/jano/prog/player.git/libplayerinterface/player.h>
 
 using namespace driver_differential;
 
@@ -270,8 +273,17 @@ int Differential::ProcessMessage ( QueuePointer  & resp_queue,
     }
 
   if ( Message::MatchMessage ( hdr, PLAYER_MSGTYPE_REQ, PLAYER_POSITION2D_REQ_GET_GEOM ) )
-    {
-      PLAYER_WARN ( "differential: geometry not supported" );
+    {      
+      player_position2d_geom_t geom;
+      memset(&geom, 0, sizeof(geom));
+      geom.pose.px = p2d_state_.pos.px;
+      geom.pose.py = p2d_state_.pos.py;
+      geom.pose.pyaw = p2d_state_.pos.pa;
+
+      geom.size.sw = axis_length_;
+      
+      Publish(hdr->addr, PLAYER_MSGTYPE_RESP_ACK, hdr->subtype, &geom);
+      PLAYER_WARN ( "differential: geometry only partially supported" );
       return 0;
     }
 
